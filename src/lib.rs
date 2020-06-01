@@ -1,25 +1,49 @@
 #[cfg(test)]
 mod tests;
 
+/// Represents AST of XML structure
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Dxml {
-    name: String,
-    text: String,
-    attributes: Vec<(String, String)>,
-    children: Vec<Dxml>,
+    /// Holds name of the tag
+    pub name: String,
+    /// Holds trimmed text contained inside of tag
+    pub text: String,
+    /// Vector of (attribute_name, attribute_values)
+    pub attributes: Vec<(String, String)>,
+    /// Vector containing children of current tag
+    pub children: Vec<Dxml>,
 }
 
 impl Dxml {
+    /// Construct new Dxml structure from given document
+    ///
+    /// #Example
+    ///
+    ///```
+    /// use dxml_rs::Dxml;
+    /// let doc = r#"<test label="TEST">
+    ///     <child>This is some text!  </child>
+    /// </test>"#;
+    /// let root = Dxml::from_string(doc);
+    /// assert!(root.is_ok());
+    /// let root = root.unwrap();
+    /// assert_eq!(root, Dxml { name: "test".into(), text: "".into(), attributes: vec![("label".into(), "TEST".into())], children: vec![
+    ///     Dxml { name: "child".into(), text: "This is some text!".into(), attributes: vec![], children: vec![] },
+    /// ]});
+    ///```
     pub fn from_string(doc: &str) -> Result<Self, &str> {
-        element().parse(doc).map(|(_, val)| val)
+        element().parse(doc).and_then(|(next_input, val)| if next_input == "" { Ok(val) } else { Err(next_input) })
     }
 }
 
+/// Holds Parsers on heap in order to speed up compilations
 struct BoxedParser<'a, Output> {
     parser: Box<dyn Parser<'a, Output> + 'a>,
 }
 
 impl<'a, Output> BoxedParser<'a, Output> {
+
+    /// Constructs new BoxedParser from simple Parser
     fn new<P>(parser: P) -> Self
     where
         P: Parser<'a, Output> + 'a,
@@ -36,11 +60,14 @@ impl<'a, Output> Parser<'a, Output> for BoxedParser<'a, Output> {
     }
 }
 
+/// Defines results of all parsing functions
 type ParseResult<'a, Output> = Result<(&'a str, Output), &'a str>;
 
+/// Defines what every parser must implement
 trait Parser<'a, Output> {
     fn parse(&self, input: &'a str) -> ParseResult<'a, Output>;
 
+    /// maps self to BoxedParser
     fn map<F, NewOutput>(self, map_fn: F) -> BoxedParser<'a, NewOutput>
     where
         Self: Sized + 'a,
@@ -51,6 +78,7 @@ trait Parser<'a, Output> {
         BoxedParser::new(map(self, map_fn))
     }
 
+    /// 'preds' self to BoxedParser
     fn pred<F>(self, pred_fn: F) -> BoxedParser<'a, Output>
     where
         Self: Sized + 'a,
@@ -60,6 +88,7 @@ trait Parser<'a, Output> {
         BoxedParser::new(pred(self, pred_fn))
     }
 
+    /// Converts Parser<A> to Parser<B> by applying Fn(A) -> Parser<B> to A
     fn and_then<F, NextParser, NewOutput>(self, f: F) -> BoxedParser<'a, NewOutput>
     where
         Self: Sized + 'a,
@@ -81,6 +110,7 @@ where
     }
 }
 
+/// Constructs a new function that parses literal provided in 'expected' argument
 fn match_literal<'a>(expected: &'static str) -> impl Parser<'a, ()> {
     move |input: &'a str| match input.get(0..expected.len()) {
         Some(next) if next == expected => Ok((&input[expected.len()..], ())),
@@ -88,6 +118,7 @@ fn match_literal<'a>(expected: &'static str) -> impl Parser<'a, ()> {
     }
 }
 
+/// Parses current string
 fn identifier(input: &str) -> ParseResult<String> {
     let mut matched = String::new();
     let mut chars = input.chars();
@@ -109,11 +140,13 @@ fn identifier(input: &str) -> ParseResult<String> {
     Ok((&input[next_idx..], matched))
 }
 
+/// Constructs a parser that parses text after a tag
 fn text<'a>() -> impl Parser<'a, String> {
     zero_or_more(any_char.pred(|c| *c != '<'))
         .map(|chars| chars.into_iter().collect::<String>().trim().into())
 }
 
+/// Constructs a parser that parses text in quotes
 fn quoted_string<'a>() -> impl Parser<'a, String> {
     right(
         match_literal("\""),
@@ -125,6 +158,7 @@ fn quoted_string<'a>() -> impl Parser<'a, String> {
     .map(|chars| chars.into_iter().collect())
 }
 
+/// Constructs a parser that returns vector of attribute pairs
 fn attributes<'a>() -> impl Parser<'a, Vec<(String, String)>> {
     zero_or_more(right(space1(), attribute_pair()))
 }
